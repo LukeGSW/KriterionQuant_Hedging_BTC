@@ -1,0 +1,40 @@
+# File: .github/workflows/scaffold.yml
+# Questo è un workflow di GitHub Actions per creare la struttura del progetto.
+
+name: Create Project Structure
+
+# Questo permette di avviare il workflow manualmente dalla tab "Actions" di GitHub
+on:
+  workflow_dispatch:
+
+jobs:
+  scaffold-project:
+    # Il workflow gira su una macchina virtuale Linux (Ubuntu) fornita da GitHub
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Fa il "checkout" del codice del repository sulla macchina virtuale
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      # 2. Esegue uno script per creare i file e le directory
+      - name: Create Project Files
+        run: |
+          touch streamlit_app.py
+          touch data_handler.py
+          touch indicator_calculator.py
+          touch backtester.py
+          touch performance_analyzer.py
+          touch requirements.txt
+          echo "Project structure created by GitHub Action" > README.md # Sovrascrive il README iniziale
+          echo "Struttura creata:"
+          ls -l
+
+      # 3. Fa il commit dei nuovi file e li carica (push) sul repository
+      - name: Commit and Push new files
+        run: |
+          git config --global user.name 'GitHub Action Bot'
+          git config --global user.email 'actions-bot@github.com'
+          git add .
+          git commit -m "feat: Add project file structure via Action"
+          git push
