@@ -22,7 +22,7 @@ st.set_page_config(
 
 # --- Parametri Fissi della Strategia Ottimizzata ---
 OPTIMAL_PARAMS = {
-    'fast_ma': 25, 'slow_ma': 50, 'adx_threshold': 15, 'adx_period': 14
+    'fast_ma': 20, 'slow_ma': 50, 'adx_threshold': 15, 'adx_period': 14
 }
 
 # ==============================================================================
