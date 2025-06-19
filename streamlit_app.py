@@ -24,7 +24,7 @@ st.set_page_config(
 # Questi sono i parametri che abbiamo "bloccato" dopo la fase di ottimizzazione
 # per la strategia Trend_Momentum_ADX
 OPTIMAL_PARAMS = {
-    'fast_ma': 30,
+    'fast_ma': 25,
     'slow_ma': 50,
     'adx_threshold': 15,
     'adx_period': 14
