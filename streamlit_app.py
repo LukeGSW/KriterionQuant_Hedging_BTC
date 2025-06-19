@@ -15,7 +15,7 @@ from performance_analyzer import PerformanceAnalyzer
 st.set_page_config(page_title="Kriterion Quant - Hedging Backtester", page_icon="🛡️", layout="wide")
 
 OPTIMAL_PARAMS = {
-    'fast_ma': 30, 'slow_ma': 50, 'adx_threshold': 15, 'adx_period': 14
+    'fast_ma': 25, 'slow_ma': 50, 'adx_threshold': 15, 'adx_period': 14
 }
 
 def render_historical_backtest_tab():
