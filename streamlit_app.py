@@ -150,7 +150,7 @@ elif active_tab == "Backtest Storico":
     start_date_backtest = st.sidebar.date_input("Data di Inizio", pd.to_datetime("2017-01-01"), key="backtest_start_date")
     initial_capital_backtest = st.sidebar.number_input("Capitale Iniziale ($)", min_value=1000, value=50000, step=1000, key="backtest_capital")
     hedge_ratio_backtest = st.sidebar.slider("Rapporto di Copertura (%)", 0, 200, 100, key="backtest_hedge_ratio") / 100.0
-    stop_loss_perc_backtest = st.sidebar.slider("Stop Loss sulle Coperture (%)", 0, 50, 0, help="Impostare a 0 per disattivare lo stop loss.") / 100.0
+    stop_loss_perc_backtest = st.sidebar.slider("Stop Loss sulle Coperture (%)", 0, 50, 6, help="Impostare a 0 per disattivare lo stop loss.") / 100.0
     run_backtest_button = st.sidebar.button("Esegui Backtest", type="primary")
     render_historical_backtest_tab(ticker_backtest, start_date_backtest, initial_capital_backtest, hedge_ratio_backtest, stop_loss_perc_backtest, run_backtest_button)
 
