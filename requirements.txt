@@ -3,3 +3,4 @@ numpy
 requests
 plotly
 streamlit
+configparser
