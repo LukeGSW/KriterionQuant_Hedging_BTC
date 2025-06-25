@@ -1,5 +1,7 @@
 # File: streamlit_app.py
-# Versione Finale, Completa e Corretta
+# Versione Modificata per differenziare le uscite sul grafico del segnale attuale.
+# NOTA: Le modifiche sono state applicate SOLO alla sezione "Segnale Attuale".
+# La logica del "Backtest Storico" e degli indicatori rimane INVARIATA.
 
 import streamlit as st
 import pandas as pd
@@ -26,23 +28,85 @@ OPTIMAL_PARAMS = {
 }
 
 # ==============================================================================
-# NUOVA FUNZIONE DI PLOTTING PER I SEGNALI
+# NUOVA FUNZIONE DI PLOTTING PER I SEGNALI CON USCITE DIFFERENZIATE
+# QUESTA FUNZIONE SOSTITUISCE LA PRECEDENTE 'plot_signals_on_price'
 # ==============================================================================
-def plot_signals_on_price(df: pd.DataFrame, ticker: str):
+def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.06):
     """
-    Crea un grafico del prezzo con i segnali di entrata e uscita dalla copertura.
+    Crea un grafico del prezzo con segnali di entrata e uscite differenziate 
+    (segnale vs. stop loss) per la visualizzazione.
+
+    NOTA: Questa funzione esegue una simulazione iterativa (non vettoriale) per
+    identificare correttamente l'entry_price e calcolare lo stop loss.
+    Questo NON cambia la logica di segnale, ma permette una visualizzazione più accurata.
+    Lo stop loss è impostato al 6% di default, come nel backtester, per coerenza visiva.
     """
-    # Questa warning è normale e può essere ignorata per ora
-    df['signal'] = np.where((df[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < df[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) & (df[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold']), 1, 0)
-    df['signal_changed'] = df['signal'].diff()
+    trades = []
+    in_position = False
+    entry_price = 0.0
+    entry_date = None
 
-    entries = df[df['signal_changed'] == 1]
-    exits = df[df['signal_changed'] == -1]
+    # La condizione di base per entrare in copertura rimane la stessa
+    signal_condition = (df[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < df[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) & \
+                       (df[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold'])
 
+    for i in range(len(df)):
+        current_date = df.index[i]
+        current_price = df['adj_close'].iloc[i]
+
+        # Logica di ENTRATA
+        if signal_condition.iloc[i] and not in_position:
+            in_position = True
+            entry_price = current_price
+            entry_date = current_date
+
+        # Logica di USCITA
+        elif in_position:
+            # 1. Controlla USCITA PER STOP LOSS (ha la priorità)
+            if current_price > entry_price * (1 + stop_loss_perc):
+                trades.append({
+                    'entry_date': entry_date, 'exit_date': current_date,
+                    'entry_price': entry_price, 'exit_price': current_price,
+                    'exit_reason': 'Stop Loss'
+                })
+                in_position = False
+
+            # 2. Controlla USCITA PER SEGNALE
+            elif not signal_condition.iloc[i]:
+                trades.append({
+                    'entry_date': entry_date, 'exit_date': current_date,
+                    'entry_price': entry_price, 'exit_price': current_price,
+                    'exit_reason': 'Segnale'
+                })
+                in_position = False
+
+    trades_df = pd.DataFrame(trades)
+    
+    # Creazione del grafico
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['adj_close'], mode='lines', name=f'Prezzo {ticker}', line=dict(color='lightgrey', width=1.5)))
-    fig.add_trace(go.Scatter(x=entries.index, y=entries['adj_close'], mode='markers', name='Entrata in Copertura', marker=dict(color='red', symbol='triangle-down', size=10)))
-    fig.add_trace(go.Scatter(x=exits.index, y=exits['adj_close'], mode='markers', name='Uscita dalla Copertura', marker=dict(color='lime', symbol='triangle-up', size=10)))
+
+    if not trades_df.empty:
+        # Punti di Entrata
+        fig.add_trace(go.Scatter(
+            x=trades_df['entry_date'], y=trades_df['entry_price'], mode='markers', 
+            name='Entrata in Copertura', marker=dict(color='red', symbol='triangle-down', size=10)
+        ))
+        
+        # Punti di Uscita da Segnale
+        signal_exits = trades_df[trades_df['exit_reason'] == 'Segnale']
+        fig.add_trace(go.Scatter(
+            x=signal_exits['exit_date'], y=signal_exits['exit_price'], mode='markers', 
+            name='Uscita da Segnale', marker=dict(color='lime', symbol='triangle-up', size=10)
+        ))
+
+        # Punti di Uscita per Stop Loss
+        stop_loss_exits = trades_df[trades_df['exit_reason'] == 'Stop Loss']
+        fig.add_trace(go.Scatter(
+            x=stop_loss_exits['exit_date'], y=stop_loss_exits['exit_price'], mode='markers', 
+            name='Uscita in Stop Loss', marker=dict(color='purple', symbol='x', size=10)
+        ))
+
     fig.update_layout(title='Prezzo e Segnali di Copertura (1 Anno)', legend_title='Legenda', template='plotly_dark')
     return fig
 
@@ -63,7 +127,6 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             client = EODHDClient()
             live_start_date = (datetime.now() - timedelta(days=500)).strftime('%Y-%m-%d')
             data_df = client.get_historical_data(api_key, ticker, live_start_date)
-            # Aggiunta per il log
             if data_df is not None:
                 print(f"Dati per {ticker} scaricati con successo: {len(data_df)} righe.")
         except Exception as e:
@@ -84,11 +147,13 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             st.markdown(f"Ultimo aggiornamento dati: **{data_df.index[-1].strftime('%d-%m-%Y')}**")
             
             st.markdown("---")
-            # Questa warning è normale e può essere ignorata per ora
+            # Assicuriamo che il grafico mostri sempre l'ultimo anno di dati
             data_last_year = data_df.last('365D')
 
             st.subheader("Grafico Prezzo e Segnali di Copertura (1 Anno)")
-            fig_signals = plot_signals_on_price(data_last_year, ticker)
+            # --- MODIFICA CHIAVE ---
+            # Chiamiamo la nuova funzione di plotting al posto della vecchia.
+            fig_signals = plot_differentiated_signals_on_price(data_last_year, ticker)
             st.plotly_chart(fig_signals, use_container_width=True)
             
             st.subheader("Grafico Prezzo e Medie Mobili (1 Anno)")
