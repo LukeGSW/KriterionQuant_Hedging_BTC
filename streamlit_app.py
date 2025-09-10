@@ -31,7 +31,7 @@ OPTIMAL_PARAMS = {
 # NUOVA FUNZIONE DI PLOTTING PER I SEGNALI CON USCITE DIFFERENZIATE
 # QUESTA FUNZIONE SOSTITUISCE LA PRECEDENTE 'plot_signals_on_price'
 # ==============================================================================
-def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.06):
+def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.03):
     """
     Crea un grafico del prezzo con segnali di entrata e uscite differenziate 
     (segnale vs. stop loss) per la visualizzazione.
@@ -272,3 +272,4 @@ elif active_tab == "Backtest Storico":
 
 elif active_tab == "Metodologia":
     render_methodology_tab()
+
