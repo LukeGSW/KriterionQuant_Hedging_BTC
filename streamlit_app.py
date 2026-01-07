@@ -115,7 +115,7 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
 # ==============================================================================
 
 def render_live_signal_tab(ticker: str, run_signal: bool):
-    """Renderizza la tab 'Segnale Attuale'."""
+    """Renderizza la tab 'Segnale Attuale' con logica corretta per lo Stop Loss."""
     st.subheader("Stato Attuale del Segnale e Analisi a 1 Anno")
     if not run_signal:
         st.info("Premi 'Aggiorna Segnale' nella sidebar per visualizzare i dati.")
@@ -125,10 +125,9 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
         try:
             api_key = st.secrets["EODHD_API_KEY"]
             client = EODHDClient()
+            # Scarichiamo abbastanza dati per stabilizzare le medie
             live_start_date = (datetime.now() - timedelta(days=500)).strftime('%Y-%m-%d')
             data_df = client.get_historical_data(api_key, ticker, live_start_date)
-            if data_df is not None:
-                print(f"Dati per {ticker} scaricati con successo: {len(data_df)} righe.")
         except Exception as e:
             st.error(f"Errore nel recupero dei dati: {e}"); data_df = None
         
@@ -139,23 +138,60 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             data_df = calc.add_adx(data_df, period=OPTIMAL_PARAMS['adx_period'])
             data_df.dropna(inplace=True)
             
-            last_row = data_df.iloc[-1]
-            signal_active = (last_row[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < last_row[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) and (last_row[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold'])
+            # --- INIZIO FIX: Calcolo stato reale tramite simulazione ---
+            # Replichiamo la logica del grafico per sapere se siamo DAVVERO dentro o se lo SL ci ha buttato fuori.
+            
+            in_position = False
+            entry_price = 0.0
+            stop_loss_perc = 0.03 # Usiamo il default del grafico o recuperalo dalla sidebar se vuoi renderlo dinamico
+            exit_reason = ""
 
-            if signal_active: st.metric("Stato Attuale", "COPERTURA ATTIVA", delta="Rischio Mitigato", delta_color="inverse")
-            else: st.metric("Stato Attuale", "NESSUNA COPERTURA", delta="Posizione Long", delta_color="normal")
+            signal_condition_series = (data_df[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < data_df[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) & \
+                                      (data_df[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold"])
+
+            for i in range(len(data_df)):
+                current_price = data_df['adj_close'].iloc[i]
+                is_signal = signal_condition_series.iloc[i]
+
+                if is_signal and not in_position:
+                    # Entrata
+                    in_position = True
+                    entry_price = current_price
+                    exit_reason = "" # Reset motivo uscita
+                
+                elif in_position:
+                    # Controllo Stop Loss
+                    if current_price > entry_price * (1 + stop_loss_perc):
+                        in_position = False
+                        exit_reason = "Stop Loss Scattato"
+                    # Controllo Fine Segnale
+                    elif not is_signal:
+                        in_position = False
+                        exit_reason = "Segnale Terminato"
+            
+            # --- FINE FIX ---
+
+            # Visualizzazione basata sulla variabile 'in_position' calcolata dal ciclo
+            if in_position: 
+                st.metric("Stato Attuale", "COPERTURA ATTIVA", delta="Rischio Mitigato", delta_color="inverse")
+            else: 
+                # Se non siamo in posizione, mostriamo perché (SL o Segnale spento)
+                label_stato = "NESSUNA COPERTURA"
+                delta_msg = exit_reason if exit_reason else "Attesa Segnale"
+                # Usiamo un delta color 'off' o 'normal'
+                st.metric("Stato Attuale", label_stato, delta=delta_msg, delta_color="off")
+
             st.markdown(f"Ultimo aggiornamento dati: **{data_df.index[-1].strftime('%d-%m-%Y')}**")
             
             st.markdown("---")
-            # Assicuriamo che il grafico mostri sempre l'ultimo anno di dati
             data_last_year = data_df.last('365D')
 
             st.subheader("Grafico Prezzo e Segnali di Copertura (1 Anno)")
-            # --- MODIFICA CHIAVE ---
-            # Chiamiamo la nuova funzione di plotting al posto della vecchia.
-            fig_signals = plot_differentiated_signals_on_price(data_last_year, ticker)
+            # Passiamo lo stesso stop_loss_perc alla funzione di plot per coerenza visiva
+            fig_signals = plot_differentiated_signals_on_price(data_last_year, ticker, stop_loss_perc=stop_loss_perc)
             st.plotly_chart(fig_signals, use_container_width=True)
             
+            # (Il resto del codice per i grafici MA e ADX rimane invariato...)
             st.subheader("Grafico Prezzo e Medie Mobili (1 Anno)")
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year['adj_close'], mode='lines', name='Prezzo', line=dict(color='black', width=2)))
@@ -272,5 +308,6 @@ elif active_tab == "Backtest Storico":
 
 elif active_tab == "Metodologia":
     render_methodology_tab()
+
 
 
