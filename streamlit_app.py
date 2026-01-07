@@ -1,5 +1,5 @@
 # File: streamlit_app.py
-# Versione Finale v2: Fix Visualizzazione Posizioni Aperte nel Grafico
+# Versione Finale v3: Stop Loss aggiornato al 5% (0.05)
 
 import streamlit as st
 import pandas as pd
@@ -26,12 +26,12 @@ OPTIMAL_PARAMS = {
 }
 
 # ==============================================================================
-# FUNZIONE DI PLOTTING AGGIORNATA (VISUALIZZA ANCHE TRADE APERTI)
+# FUNZIONE DI PLOTTING AGGIORNATA
 # ==============================================================================
-def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.03):
+def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.05):
     """
     Crea un grafico del prezzo con segnali di entrata e uscite differenziate.
-    ORA INCLUDE LA VISUALIZZAZIONE DELLA POSIZIONE APERTA CORRENTE.
+    Stop Loss default: 5%
     """
     trades = []
     in_position = False
@@ -59,7 +59,6 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
             in_position = True
             entry_price = current_price
             entry_date = current_date
-            # Salviamo questi dati temporaneamente
             last_open_entry_date = current_date
             last_open_entry_price = current_price
 
@@ -73,7 +72,7 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
                     'exit_reason': 'Stop Loss'
                 })
                 in_position = False
-                last_open_entry_date = None # Reset
+                last_open_entry_date = None
             
             # 2. FINE SEGNALE
             elif not signal_condition.iloc[i]:
@@ -83,7 +82,7 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
                     'exit_reason': 'Segnale'
                 })
                 in_position = False
-                last_open_entry_date = None # Reset
+                last_open_entry_date = None
 
     trades_df = pd.DataFrame(trades)
     
@@ -93,34 +92,30 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
 
     # 1. Disegna Trade CHIUSI
     if not trades_df.empty:
-        # Entrate storiche
         fig.add_trace(go.Scatter(
             x=trades_df['entry_date'], y=trades_df['entry_price'], mode='markers', 
             name='Entrata (Chiusa)', marker=dict(color='red', symbol='triangle-down', size=8, opacity=0.6)
         ))
         
-        # Uscite Segnale
         signal_exits = trades_df[trades_df['exit_reason'] == 'Segnale']
         fig.add_trace(go.Scatter(
             x=signal_exits['exit_date'], y=signal_exits['exit_price'], mode='markers', 
             name='Uscita (Segnale)', marker=dict(color='lime', symbol='triangle-up', size=10)
         ))
 
-        # Uscite Stop Loss
         stop_loss_exits = trades_df[trades_df['exit_reason'] == 'Stop Loss']
         fig.add_trace(go.Scatter(
             x=stop_loss_exits['exit_date'], y=stop_loss_exits['exit_price'], mode='markers', 
             name='Uscita (Stop Loss)', marker=dict(color='purple', symbol='x', size=10)
         ))
 
-    # 2. Disegna Trade APERTO (se presente) [FIX CRITICO]
+    # 2. Disegna Trade APERTO
     if in_position and last_open_entry_date is not None:
         fig.add_trace(go.Scatter(
             x=[last_open_entry_date], y=[last_open_entry_price], mode='markers',
             name='ENTRATA CORRENTE (APERTA)', 
             marker=dict(color='red', symbol='triangle-down', size=14, line=dict(width=2, color='white'))
         ))
-        # Aggiungiamo un'annotazione per renderlo evidente
         fig.add_annotation(
             x=last_open_entry_date, y=last_open_entry_price,
             text="In Posizione", showarrow=True, arrowhead=1, yshift=-15
@@ -130,7 +125,7 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
     return fig
 
 # ==============================================================================
-# FUNZIONI TAB (Logica invariata, solo integrata con il nuovo plot)
+# FUNZIONI TAB
 # ==============================================================================
 
 def render_live_signal_tab(ticker: str, run_signal: bool):
@@ -162,7 +157,7 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
 
             in_position = False
             entry_price = 0.0
-            stop_loss_perc = 0.03
+            stop_loss_perc = 0.05 # <--- AGGIORNATO A 5%
             exit_reason = ""
 
             signal_condition_series = (data_df[col_fast] < data_df[col_slow]) & \
@@ -200,7 +195,7 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             data_last_year = data_df.last('365D')
             st.subheader("Grafico Prezzo e Segnali di Copertura (1 Anno)")
             
-            # Qui chiamiamo la nuova funzione che disegna anche il trade aperto
+            # Qui chiamiamo la funzione che usa il default 0.05
             fig_signals = plot_differentiated_signals_on_price(data_last_year, ticker, stop_loss_perc=stop_loss_perc)
             st.plotly_chart(fig_signals, use_container_width=True)
             
@@ -305,7 +300,9 @@ elif active_tab == "Backtest Storico":
     start_dt = st.sidebar.date_input("Inizio", pd.to_datetime("2017-01-01"))
     cap = st.sidebar.number_input("Capitale", value=50000)
     hedge = st.sidebar.slider("Hedge %", 0, 200, 100) / 100.0
-    sl = st.sidebar.slider("Stop Loss %", 0, 50, 3) / 100.0
+    
+    # MODIFICATO IL DEFAULT DELLO SLIDER A 5
+    sl = st.sidebar.slider("Stop Loss %", 0, 50, 5) / 100.0 # <--- DEFAULT 5%
     if st.sidebar.button("Esegui Backtest", type="primary"):
         render_historical_backtest_tab(ticker, start_dt, cap, hedge, sl, True)
 
