@@ -1,7 +1,5 @@
 # File: streamlit_app.py
-# Versione Modificata per differenziare le uscite sul grafico del segnale attuale.
-# NOTA: Le modifiche sono state applicate SOLO alla sezione "Segnale Attuale".
-# La logica del "Backtest Storico" e degli indicatori rimane INVARIATA.
+# Versione Finale Corretta: Fix Sintassi F-String e Logica Stop Loss Coerente.
 
 import streamlit as st
 import pandas as pd
@@ -29,26 +27,25 @@ OPTIMAL_PARAMS = {
 
 # ==============================================================================
 # NUOVA FUNZIONE DI PLOTTING PER I SEGNALI CON USCITE DIFFERENZIATE
-# QUESTA FUNZIONE SOSTITUISCE LA PRECEDENTE 'plot_signals_on_price'
 # ==============================================================================
 def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.03):
     """
     Crea un grafico del prezzo con segnali di entrata e uscite differenziate 
     (segnale vs. stop loss) per la visualizzazione.
-
-    NOTA: Questa funzione esegue una simulazione iterativa (non vettoriale) per
-    identificare correttamente l'entry_price e calcolare lo stop loss.
-    Questo NON cambia la logica di segnale, ma permette una visualizzazione più accurata.
-    Lo stop loss è impostato al 6% di default, come nel backtester, per coerenza visiva.
     """
     trades = []
     in_position = False
     entry_price = 0.0
     entry_date = None
 
-    # La condizione di base per entrare in copertura rimane la stessa
-    signal_condition = (df[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < df[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) & \
-                       (df[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold'])
+    # Definiamo i nomi colonne per evitare errori di sintassi
+    col_fast = f"sma_{OPTIMAL_PARAMS['fast_ma']}"
+    col_slow = f"sma_{OPTIMAL_PARAMS['slow_ma']}"
+    col_adx = f"ADX_{OPTIMAL_PARAMS['adx_period']}"
+
+    # La condizione di base per entrare in copertura
+    signal_condition = (df[col_fast] < df[col_slow]) & \
+                       (df[col_adx] > OPTIMAL_PARAMS['adx_threshold'])
 
     for i in range(len(df)):
         current_date = df.index[i]
@@ -138,47 +135,45 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             data_df = calc.add_adx(data_df, period=OPTIMAL_PARAMS['adx_period'])
             data_df.dropna(inplace=True)
             
-            # --- INIZIO FIX: Calcolo stato reale tramite simulazione ---
-            # Replichiamo la logica del grafico per sapere se siamo DAVVERO dentro o se lo SL ci ha buttato fuori.
-            
+            # --- FIX SINTASSI & LOGICA ---
+            # 1. Definiamo i nomi colonna per evitare SyntaxError nelle f-string annidate
+            col_fast = f"sma_{OPTIMAL_PARAMS['fast_ma']}"
+            col_slow = f"sma_{OPTIMAL_PARAMS['slow_ma']}"
+            col_adx = f"ADX_{OPTIMAL_PARAMS['adx_period']}"
+
+            # 2. Calcolo stato reale tramite simulazione
             in_position = False
             entry_price = 0.0
-            stop_loss_perc = 0.03 # Usiamo il default del grafico o recuperalo dalla sidebar se vuoi renderlo dinamico
+            stop_loss_perc = 0.03 # Default SL grafico
             exit_reason = ""
 
-            signal_condition_series = (data_df[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < data_df[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) & \
-                                      (data_df[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold"])
+            # Calcolo serie booleana con nomi variabili puliti
+            signal_condition_series = (data_df[col_fast] < data_df[col_slow]) & \
+                                      (data_df[col_adx] > OPTIMAL_PARAMS['adx_threshold'])
 
             for i in range(len(data_df)):
                 current_price = data_df['adj_close'].iloc[i]
                 is_signal = signal_condition_series.iloc[i]
 
                 if is_signal and not in_position:
-                    # Entrata
                     in_position = True
                     entry_price = current_price
-                    exit_reason = "" # Reset motivo uscita
+                    exit_reason = "" 
                 
                 elif in_position:
-                    # Controllo Stop Loss
                     if current_price > entry_price * (1 + stop_loss_perc):
                         in_position = False
                         exit_reason = "Stop Loss Scattato"
-                    # Controllo Fine Segnale
                     elif not is_signal:
                         in_position = False
                         exit_reason = "Segnale Terminato"
             
-            # --- FINE FIX ---
-
             # Visualizzazione basata sulla variabile 'in_position' calcolata dal ciclo
             if in_position: 
                 st.metric("Stato Attuale", "COPERTURA ATTIVA", delta="Rischio Mitigato", delta_color="inverse")
             else: 
-                # Se non siamo in posizione, mostriamo perché (SL o Segnale spento)
                 label_stato = "NESSUNA COPERTURA"
                 delta_msg = exit_reason if exit_reason else "Attesa Segnale"
-                # Usiamo un delta color 'off' o 'normal'
                 st.metric("Stato Attuale", label_stato, delta=delta_msg, delta_color="off")
 
             st.markdown(f"Ultimo aggiornamento dati: **{data_df.index[-1].strftime('%d-%m-%Y')}**")
@@ -187,22 +182,20 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             data_last_year = data_df.last('365D')
 
             st.subheader("Grafico Prezzo e Segnali di Copertura (1 Anno)")
-            # Passiamo lo stesso stop_loss_perc alla funzione di plot per coerenza visiva
             fig_signals = plot_differentiated_signals_on_price(data_last_year, ticker, stop_loss_perc=stop_loss_perc)
             st.plotly_chart(fig_signals, use_container_width=True)
             
-            # (Il resto del codice per i grafici MA e ADX rimane invariato...)
             st.subheader("Grafico Prezzo e Medie Mobili (1 Anno)")
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year['adj_close'], mode='lines', name='Prezzo', line=dict(color='black', width=2)))
-            fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[f"sma_{OPTIMAL_PARAMS['fast_ma']}"], mode='lines', name=f"SMA({OPTIMAL_PARAMS['fast_ma']})"))
-            fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[f"sma_{OPTIMAL_PARAMS['slow_ma']}"], mode='lines', name=f"SMA({OPTIMAL_PARAMS['slow_ma']})"))
+            fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[col_fast], mode='lines', name=f"SMA({OPTIMAL_PARAMS['fast_ma']})"))
+            fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[col_slow], mode='lines', name=f"SMA({OPTIMAL_PARAMS['slow_ma']})"))
             fig_price.update_layout(title='Prezzo e Medie Mobili', legend_title='Legenda')
             st.plotly_chart(fig_price, use_container_width=True)
             
             st.subheader("Grafico ADX (1 Anno)")
             fig_adx = go.Figure()
-            fig_adx.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[f"ADX_{OPTIMAL_PARAMS['adx_period']}"], mode='lines', name='ADX'))
+            fig_adx.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[col_adx], mode='lines', name='ADX'))
             fig_adx.add_shape(type="line", x0=data_last_year.index[0], y0=OPTIMAL_PARAMS['adx_threshold'], x1=data_last_year.index[-1], y1=OPTIMAL_PARAMS['adx_threshold'], line=dict(color="Red", dash="dash"))
             fig_adx.update_layout(title=f"Indicatore ADX({OPTIMAL_PARAMS['adx_period']}) e Soglia di Trend", legend_title='Legenda')
             st.plotly_chart(fig_adx, use_container_width=True)
@@ -231,7 +224,12 @@ def render_historical_backtest_tab(ticker, start_date, capital, hedge_ratio, sl_
             data_df = calc.add_adx(data_df, period=OPTIMAL_PARAMS['adx_period'])
             data_df.dropna(inplace=True)
             
-            base_signal = np.where((data_df[f"sma_{OPTIMAL_PARAMS['fast_ma']}"] < data_df[f"sma_{OPTIMAL_PARAMS['slow_ma']}"]) & (data_df[f"ADX_{OPTIMAL_PARAMS['adx_period']}"] > OPTIMAL_PARAMS['adx_threshold']), -1, 0)
+            # Anche qui usiamo nomi colonna puliti per coerenza
+            col_fast = f"sma_{OPTIMAL_PARAMS['fast_ma']}"
+            col_slow = f"sma_{OPTIMAL_PARAMS['slow_ma']}"
+            col_adx = f"ADX_{OPTIMAL_PARAMS['adx_period']}"
+
+            base_signal = np.where((data_df[col_fast] < data_df[col_slow]) & (data_df[col_adx] > OPTIMAL_PARAMS['adx_threshold']), -1, 0)
             backtester = EventDrivenBacktester()
             results = backtester.run_backtest(data_df, pd.Series(base_signal, index=data_df.index), capital, hedge_ratio, sl_perc)
             
@@ -256,7 +254,10 @@ def render_historical_backtest_tab(ticker, start_date, capital, hedge_ratio, sl_
             with col1:
                 st.markdown("##### Strategia Coperta (Hedged)")
                 kpi_df_hedged = pd.DataFrame.from_dict(kpis_hedged, orient='index', columns=['Valore'])
-                kpi_df_hedged.loc[['Max Drawdown', 'Short-Only MaxDD']] = kpi_df_hedged.loc[['Max Drawdown', 'Short-Only MaxDD']].applymap(lambda x: f"{x:.2%}")
+                if 'Max Drawdown' in kpi_df_hedged.index:
+                    kpi_df_hedged.loc['Max Drawdown'] = kpi_df_hedged.loc['Max Drawdown'].apply(lambda x: f"{x:.2%}" if isinstance(x, (int, float)) else x)
+                if 'Short-Only MaxDD' in kpi_df_hedged.index:
+                    kpi_df_hedged.loc['Short-Only MaxDD'] = kpi_df_hedged.loc['Short-Only MaxDD'].apply(lambda x: f"{x:.2%}" if isinstance(x, (int, float)) else x)
                 st.table(kpi_df_hedged)
 
             with col2:
@@ -264,7 +265,8 @@ def render_historical_backtest_tab(ticker, start_date, capital, hedge_ratio, sl_
                 kpis_bh.pop('Short-Only MaxDD', None)
                 kpis_bh['Num Trades'] = 1
                 kpi_df_bh = pd.DataFrame.from_dict(kpis_bh, orient='index', columns=['Valore'])
-                kpi_df_bh.loc['Max Drawdown'] = f"{kpi_df_bh.loc['Max Drawdown'].values[0]:.2%}"
+                if 'Max Drawdown' in kpi_df_bh.index:
+                    kpi_df_bh.loc['Max Drawdown'] = f"{kpi_df_bh.loc['Max Drawdown'].values[0]:.2%}"
                 st.table(kpi_df_bh)
         else:
             st.warning("Non è stato possibile recuperare i dati per il ticker specificato.")
@@ -300,7 +302,6 @@ elif active_tab == "Backtest Storico":
     initial_capital_backtest = st.sidebar.number_input("Capitale Iniziale ($)", min_value=1000, value=50000, step=1000, key="backtest_capital")
     hedge_ratio_backtest = st.sidebar.slider("Rapporto di Copertura (%)", 0, 200, 100, key="backtest_hedge_ratio") / 100.0
     
-    # MODIFICA STOP LOSS DEFAULT A 6%
     stop_loss_perc_backtest = st.sidebar.slider("Stop Loss sulle Coperture (%)", 0, 50, 3, help="Impostare a 0 per disattivare lo stop loss.") / 100.0
     
     run_backtest_button = st.sidebar.button("Esegui Backtest", type="primary")
@@ -308,6 +309,3 @@ elif active_tab == "Backtest Storico":
 
 elif active_tab == "Metodologia":
     render_methodology_tab()
-
-
-
