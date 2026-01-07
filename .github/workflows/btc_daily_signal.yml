@@ -3,7 +3,6 @@ name: Daily BTC Hedging Signal
 
 on:
   schedule:
-    # Esegue ogni giorno alle 00:05 UTC
     - cron: '5 0 * * *'
   workflow_dispatch:
 
@@ -39,7 +38,7 @@ jobs:
           echo "slow_ma = 40" >> config.ini
           echo "adx_period = 14" >> config.ini
           echo "adx_threshold = 15" >> config.ini
-          echo "stop_loss_perc = 0.03" >> config.ini  # <--- AGGIUNGI QUESTA RIGA (3% o valore preferito)
+          echo "stop_loss_perc = 0.05" >> config.ini  # <--- MODIFICATO A 0.05 (5%)
       
       - name: 5. Run the signal generation script
         run: python btc_bot_runner.py
