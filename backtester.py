@@ -1,5 +1,5 @@
-# File: backtester.py (Versione 2.0 - Event-Driven)
-# Modulo per il progetto KriterionQuant Hedging App
+# File: backtester.py
+# Versione 3.0 - Allineata perfettamente alla logica "Live" (Signal on Close)
 
 import pandas as pd
 import numpy as np
@@ -7,80 +7,105 @@ import numpy as np
 class EventDrivenBacktester:
     """
     Esegue un backtest basato su un ciclo (event-driven) che permette
-    l'implementazione di logiche complesse come lo stop loss.
+    l'implementazione di logiche complesse come lo stop loss, 
+    rispecchiando esattamente la logica del Bot e della Dashboard Live.
     """
     def run_backtest(self, data: pd.DataFrame, strategy_signal: pd.Series, 
                      initial_capital: float, hedge_ratio: float, 
                      stop_loss_perc: float) -> dict:
         """
-        Esegue il backtest e restituisce i risultati.
-
-        Args:
-            data (pd.DataFrame): Dati OHLC e indicatori.
-            strategy_signal (pd.Series): Segnali di entrata (-1 per iniziare hedge).
-            initial_capital (float): Capitale iniziale.
-            hedge_ratio (float): Frazione del capitale da coprire.
-            stop_loss_perc (float): Percentuale di stop loss (es. 0.10 per 10%).
-
-        Returns:
-            dict: Dizionario con curve di equity e altri risultati.
+        Esegue il backtest.
+        
+        Logica Temporale:
+        - I segnali vengono calcolati sul Close della candela 'i'.
+        - Se Signal[i] == -1 (Short), si assume entrata al Close[i].
+        - Pertanto, la posizione per il giorno 'i+1' sarà Hedged.
         """
-        positions = pd.Series(index=data.index, dtype=float).fillna(0)
+        # Array posizioni: 1 = Long (Non Hedged), 0 = Hedged (Flat/Short coperto)
+        # Iniziamo tutti Long (1)
+        positions = pd.Series(1.0, index=data.index)
         
         # Stato del backtest
         is_hedged = False
         entry_price = 0.0
+        
+        # Usiamo adj_close per coerenza con i ritorni e il grafico
+        price_col = 'adj_close' 
 
-        # Ciclo principale del backtest
+        # Ciclo principale
+        # Partiamo da 1 perché guardiamo indietro a i-1
         for i in range(1, len(data)):
-            # Se siamo coperti, verifichiamo le condizioni di uscita
+            current_close = data[price_col].iloc[i-1] # Close di IERI (prezzo al momento della decisione)
+            current_signal = strategy_signal.iloc[i-1] # Segnale generato al Close di IERI
+            
+            # --- Logica di Uscita (se siamo coperti) ---
             if is_hedged:
-                # Condizione di uscita 1: Stop Loss
-                stop_loss_triggered = data['close'][i-1] >= entry_price * (1 + stop_loss_perc)
-                # Condizione di uscita 2: Il segnale base scompare
-                signal_exited = strategy_signal[i-1] == 0
-
-                if stop_loss_triggered or signal_exited:
-                    is_hedged = False
+                # 1. Stop Loss Check
+                # Verifichiamo se il Close di IERI ha violato lo stop rispetto all'entry price
+                if current_close > entry_price * (1 + stop_loss_perc):
+                    is_hedged = False # Uscita (Stop Loss)
+                    entry_price = 0.0
+                
+                # 2. Signal Exit Check
+                # Se il segnale non è più attivo (es. le medie hanno incrociato al rialzo)
+                elif current_signal == 0:
+                    is_hedged = False # Uscita (Fine Trend)
                     entry_price = 0.0
             
-            # Se NON siamo coperti, verifichiamo la condizione di entrata
-            else:
-                if strategy_signal[i-1] == -1:
+            # --- Logica di Entrata (se NON siamo coperti) ---
+            # Nota: Usiamo 'elif' perché se usciamo oggi, rimaniamo flat fino a domani (buco di 1 giorno come nel grafico)
+            elif not is_hedged:
+                if current_signal == -1:
                     is_hedged = True
-                    # L'entrata avviene all'apertura del giorno corrente
-                    entry_price = data['open'][i]
+                    entry_price = current_close # Entrata al Close di IERI
             
-            # Registriamo la posizione per il giorno corrente: 0 se coperti, 1 se long
+            # Registrazione Posizione per il giorno 'i' (Oggi)
+            # Se 'is_hedged' è True, oggi siamo coperti.
             if is_hedged:
-                positions[i] = 0
+                positions.iloc[i] = 0.0 # Hedged
             else:
-                positions[i] = 1
+                positions.iloc[i] = 1.0 # Long Only
 
-        # --- Calcolo finanziario vettorizzato basato sulle posizioni finali ---
+        # --- Calcolo Finanziario Vettorizzato ---
+        # returns[i] è il rendimento da (i-1) a (i).
         returns = data['adj_close'].pct_change().fillna(0)
 
-        # Rendimento della parte non coperta (sempre long)
-        unhedged_part_returns = returns * (1 - hedge_ratio)
+        # La posizione che influenza il returns[i] è quella decisa a [i-1]?
+        # No, nel loop sopra 'positions[i]' rappresenta lo stato del portafoglio DURANTE il giorno i.
+        # Esempio: Se a (i-1) scatta il segnale, il loop setta is_hedged=True, e positions[i]=0.
+        # Quindi il rendimento returns[i] (da i-1 a i) verrà moltiplicato per 0 (annullato/coperto). Corretto.
         
-        # Rendimento della parte coperta (long o flat, in base alle posizioni finali)
-        hedged_part_returns = returns * positions.shift(1) * hedge_ratio
+        # Rendimento della parte NON coperta (sempre a mercato)
+        # Se positions[i] è 1 (Long), prendiamo 100% return. Se è 0 (Hedged), prendiamo (1-hedge_ratio).
+        # Ma semplifichiamo:
+        # Long Only Part: Sempre 1 * (1 - hedge_ratio)
+        # Hedged Part: positions * hedge_ratio
         
-        # Rendimento totale
-        hedged_strategy_returns = unhedged_part_returns + hedged_part_returns
+        # Se Hedge Ratio = 100% (1.0):
+        # Se Long (pos=1): 1 * 1.0 = 100% return.
+        # Se Hedged (pos=0): 0 * 1.0 = 0% return.
+        
+        # Formula Generale per Strategy Returns:
+        # (Quota fissa Long) + (Quota variabile gestita)
+        # Quota fissa Long = (1 - hedge_ratio)
+        # Quota variabile = hedge_ratio * positions
+        
+        portfolio_exposure = (1 - hedge_ratio) + (hedge_ratio * positions)
+        hedged_strategy_returns = returns * portfolio_exposure
         
         # Calcolo curve di equity
         long_only_equity = (1 + returns).cumprod() * initial_capital
         hedged_equity = (1 + hedged_strategy_returns).cumprod() * initial_capital
         
-        # Calcolo rendimenti della sola componente short
-        short_signals = np.where(positions.shift(1) == 0, -1, 0)
-        hedge_only_returns = returns * pd.Series(short_signals, index=data.index) * -1
+        # Calcolo rendimenti della sola componente short (per KPI)
+        # Shortiamo quando positions == 0. Quindi segnale short = (1 - positions) * -1
+        short_exposure = (1 - positions) * -1
+        hedge_only_returns = returns * short_exposure
         
         results = {
             'long_only': long_only_equity.dropna(),
             'hedged': hedged_equity.dropna(),
             'hedge_only_returns': hedge_only_returns.dropna(),
-            'signal': strategy_signal # Manteniamo il segnale originale per coerenza
+            'signal': strategy_signal
         }
         return results
