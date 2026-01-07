@@ -1,5 +1,5 @@
 # File: streamlit_app.py
-# Versione Finale Corretta: Fix Sintassi F-String e Logica Stop Loss Coerente.
+# Versione Finale v2: Fix Visualizzazione Posizioni Aperte nel Grafico
 
 import streamlit as st
 import pandas as pd
@@ -26,24 +26,27 @@ OPTIMAL_PARAMS = {
 }
 
 # ==============================================================================
-# NUOVA FUNZIONE DI PLOTTING PER I SEGNALI CON USCITE DIFFERENZIATE
+# FUNZIONE DI PLOTTING AGGIORNATA (VISUALIZZA ANCHE TRADE APERTI)
 # ==============================================================================
 def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_loss_perc: float = 0.03):
     """
-    Crea un grafico del prezzo con segnali di entrata e uscite differenziate 
-    (segnale vs. stop loss) per la visualizzazione.
+    Crea un grafico del prezzo con segnali di entrata e uscite differenziate.
+    ORA INCLUDE LA VISUALIZZAZIONE DELLA POSIZIONE APERTA CORRENTE.
     """
     trades = []
     in_position = False
     entry_price = 0.0
     entry_date = None
+    
+    # Variabili per tracciare l'ultima posizione se rimane aperta
+    last_open_entry_date = None
+    last_open_entry_price = None
 
-    # Definiamo i nomi colonne per evitare errori di sintassi
+    # Nomi colonne per evitare errori
     col_fast = f"sma_{OPTIMAL_PARAMS['fast_ma']}"
     col_slow = f"sma_{OPTIMAL_PARAMS['slow_ma']}"
     col_adx = f"ADX_{OPTIMAL_PARAMS['adx_period']}"
 
-    # La condizione di base per entrare in copertura
     signal_condition = (df[col_fast] < df[col_slow]) & \
                        (df[col_adx] > OPTIMAL_PARAMS['adx_threshold'])
 
@@ -56,10 +59,13 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
             in_position = True
             entry_price = current_price
             entry_date = current_date
+            # Salviamo questi dati temporaneamente
+            last_open_entry_date = current_date
+            last_open_entry_price = current_price
 
         # Logica di USCITA
         elif in_position:
-            # 1. Controlla USCITA PER STOP LOSS (ha la priorità)
+            # 1. STOP LOSS
             if current_price > entry_price * (1 + stop_loss_perc):
                 trades.append({
                     'entry_date': entry_date, 'exit_date': current_date,
@@ -67,8 +73,9 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
                     'exit_reason': 'Stop Loss'
                 })
                 in_position = False
-
-            # 2. Controlla USCITA PER SEGNALE
+                last_open_entry_date = None # Reset
+            
+            # 2. FINE SEGNALE
             elif not signal_condition.iloc[i]:
                 trades.append({
                     'entry_date': entry_date, 'exit_date': current_date,
@@ -76,43 +83,57 @@ def plot_differentiated_signals_on_price(df: pd.DataFrame, ticker: str, stop_los
                     'exit_reason': 'Segnale'
                 })
                 in_position = False
+                last_open_entry_date = None # Reset
 
     trades_df = pd.DataFrame(trades)
     
-    # Creazione del grafico
+    # --- CREAZIONE GRAFICO ---
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=df.index, y=df['adj_close'], mode='lines', name=f'Prezzo {ticker}', line=dict(color='lightgrey', width=1.5)))
 
+    # 1. Disegna Trade CHIUSI
     if not trades_df.empty:
-        # Punti di Entrata
+        # Entrate storiche
         fig.add_trace(go.Scatter(
             x=trades_df['entry_date'], y=trades_df['entry_price'], mode='markers', 
-            name='Entrata in Copertura', marker=dict(color='red', symbol='triangle-down', size=10)
+            name='Entrata (Chiusa)', marker=dict(color='red', symbol='triangle-down', size=8, opacity=0.6)
         ))
         
-        # Punti di Uscita da Segnale
+        # Uscite Segnale
         signal_exits = trades_df[trades_df['exit_reason'] == 'Segnale']
         fig.add_trace(go.Scatter(
             x=signal_exits['exit_date'], y=signal_exits['exit_price'], mode='markers', 
-            name='Uscita da Segnale', marker=dict(color='lime', symbol='triangle-up', size=10)
+            name='Uscita (Segnale)', marker=dict(color='lime', symbol='triangle-up', size=10)
         ))
 
-        # Punti di Uscita per Stop Loss
+        # Uscite Stop Loss
         stop_loss_exits = trades_df[trades_df['exit_reason'] == 'Stop Loss']
         fig.add_trace(go.Scatter(
             x=stop_loss_exits['exit_date'], y=stop_loss_exits['exit_price'], mode='markers', 
-            name='Uscita in Stop Loss', marker=dict(color='purple', symbol='x', size=10)
+            name='Uscita (Stop Loss)', marker=dict(color='purple', symbol='x', size=10)
         ))
+
+    # 2. Disegna Trade APERTO (se presente) [FIX CRITICO]
+    if in_position and last_open_entry_date is not None:
+        fig.add_trace(go.Scatter(
+            x=[last_open_entry_date], y=[last_open_entry_price], mode='markers',
+            name='ENTRATA CORRENTE (APERTA)', 
+            marker=dict(color='red', symbol='triangle-down', size=14, line=dict(width=2, color='white'))
+        ))
+        # Aggiungiamo un'annotazione per renderlo evidente
+        fig.add_annotation(
+            x=last_open_entry_date, y=last_open_entry_price,
+            text="In Posizione", showarrow=True, arrowhead=1, yshift=-15
+        )
 
     fig.update_layout(title='Prezzo e Segnali di Copertura (1 Anno)', legend_title='Legenda', template='plotly_dark')
     return fig
 
 # ==============================================================================
-# DEFINIZIONE DELLE FUNZIONI PER LE TAB
+# FUNZIONI TAB (Logica invariata, solo integrata con il nuovo plot)
 # ==============================================================================
 
 def render_live_signal_tab(ticker: str, run_signal: bool):
-    """Renderizza la tab 'Segnale Attuale' con logica corretta per lo Stop Loss."""
     st.subheader("Stato Attuale del Segnale e Analisi a 1 Anno")
     if not run_signal:
         st.info("Premi 'Aggiorna Segnale' nella sidebar per visualizzare i dati.")
@@ -122,7 +143,6 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
         try:
             api_key = st.secrets["EODHD_API_KEY"]
             client = EODHDClient()
-            # Scarichiamo abbastanza dati per stabilizzare le medie
             live_start_date = (datetime.now() - timedelta(days=500)).strftime('%Y-%m-%d')
             data_df = client.get_historical_data(api_key, ticker, live_start_date)
         except Exception as e:
@@ -135,19 +155,16 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
             data_df = calc.add_adx(data_df, period=OPTIMAL_PARAMS['adx_period'])
             data_df.dropna(inplace=True)
             
-            # --- FIX SINTASSI & LOGICA ---
-            # 1. Definiamo i nomi colonna per evitare SyntaxError nelle f-string annidate
+            # --- LOGICA SIMULAZIONE STATO ---
             col_fast = f"sma_{OPTIMAL_PARAMS['fast_ma']}"
             col_slow = f"sma_{OPTIMAL_PARAMS['slow_ma']}"
             col_adx = f"ADX_{OPTIMAL_PARAMS['adx_period']}"
 
-            # 2. Calcolo stato reale tramite simulazione
             in_position = False
             entry_price = 0.0
-            stop_loss_perc = 0.03 # Default SL grafico
+            stop_loss_perc = 0.03
             exit_reason = ""
 
-            # Calcolo serie booleana con nomi variabili puliti
             signal_condition_series = (data_df[col_fast] < data_df[col_slow]) & \
                                       (data_df[col_adx] > OPTIMAL_PARAMS['adx_threshold'])
 
@@ -168,54 +185,54 @@ def render_live_signal_tab(ticker: str, run_signal: bool):
                         in_position = False
                         exit_reason = "Segnale Terminato"
             
-            # Visualizzazione basata sulla variabile 'in_position' calcolata dal ciclo
+            # --- VISUALIZZAZIONE TESTO ---
             if in_position: 
-                st.metric("Stato Attuale", "COPERTURA ATTIVA", delta="Rischio Mitigato", delta_color="inverse")
+                st.metric("Stato Attuale", "COPERTURA ATTIVA", delta="Posizione Aperta", delta_color="inverse")
             else: 
                 label_stato = "NESSUNA COPERTURA"
                 delta_msg = exit_reason if exit_reason else "Attesa Segnale"
                 st.metric("Stato Attuale", label_stato, delta=delta_msg, delta_color="off")
 
             st.markdown(f"Ultimo aggiornamento dati: **{data_df.index[-1].strftime('%d-%m-%Y')}**")
-            
             st.markdown("---")
+            
+            # --- VISUALIZZAZIONE GRAFICO ---
             data_last_year = data_df.last('365D')
-
             st.subheader("Grafico Prezzo e Segnali di Copertura (1 Anno)")
+            
+            # Qui chiamiamo la nuova funzione che disegna anche il trade aperto
             fig_signals = plot_differentiated_signals_on_price(data_last_year, ticker, stop_loss_perc=stop_loss_perc)
             st.plotly_chart(fig_signals, use_container_width=True)
             
+            # Grafici ausiliari
             st.subheader("Grafico Prezzo e Medie Mobili (1 Anno)")
             fig_price = go.Figure()
             fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year['adj_close'], mode='lines', name='Prezzo', line=dict(color='black', width=2)))
             fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[col_fast], mode='lines', name=f"SMA({OPTIMAL_PARAMS['fast_ma']})"))
             fig_price.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[col_slow], mode='lines', name=f"SMA({OPTIMAL_PARAMS['slow_ma']})"))
-            fig_price.update_layout(title='Prezzo e Medie Mobili', legend_title='Legenda')
             st.plotly_chart(fig_price, use_container_width=True)
             
             st.subheader("Grafico ADX (1 Anno)")
             fig_adx = go.Figure()
             fig_adx.add_trace(go.Scatter(x=data_last_year.index, y=data_last_year[col_adx], mode='lines', name='ADX'))
             fig_adx.add_shape(type="line", x0=data_last_year.index[0], y0=OPTIMAL_PARAMS['adx_threshold'], x1=data_last_year.index[-1], y1=OPTIMAL_PARAMS['adx_threshold'], line=dict(color="Red", dash="dash"))
-            fig_adx.update_layout(title=f"Indicatore ADX({OPTIMAL_PARAMS['adx_period']}) e Soglia di Trend", legend_title='Legenda')
             st.plotly_chart(fig_adx, use_container_width=True)
         else:
-            st.warning("Non è stato possibile recuperare i dati recenti per il ticker specificato.")
+            st.warning("Non è stato possibile recuperare i dati recenti.")
 
 def render_historical_backtest_tab(ticker, start_date, capital, hedge_ratio, sl_perc, run_backtest):
-    """Renderizza la tab 'Backtest Storico'."""
     st.subheader("Simulatore di Performance Storica")
     if not run_backtest:
-        st.info("Imposta i parametri nella sidebar e premi 'Esegui Backtest' per visualizzare i risultati.")
+        st.info("Imposta i parametri nella sidebar e premi 'Esegui Backtest'.")
         return
         
-    with st.spinner("Esecuzione del backtest storico..."):
+    with st.spinner("Esecuzione backtest..."):
         try:
             api_key = st.secrets["EODHD_API_KEY"]
             client = EODHDClient()
             data_df = client.get_historical_data(api_key, ticker, start_date.strftime('%Y-%m-%d'))
         except Exception as e:
-            st.error(f"Errore nel recupero dei dati: {e}"); data_df = None
+            st.error(f"Errore dati: {e}"); data_df = None
 
         if data_df is not None and not data_df.empty:
             calc = IndicatorCalculator()
@@ -224,7 +241,6 @@ def render_historical_backtest_tab(ticker, start_date, capital, hedge_ratio, sl_
             data_df = calc.add_adx(data_df, period=OPTIMAL_PARAMS['adx_period'])
             data_df.dropna(inplace=True)
             
-            # Anche qui usiamo nomi colonna puliti per coerenza
             col_fast = f"sma_{OPTIMAL_PARAMS['fast_ma']}"
             col_slow = f"sma_{OPTIMAL_PARAMS['slow_ma']}"
             col_adx = f"ADX_{OPTIMAL_PARAMS['adx_period']}"
@@ -243,69 +259,55 @@ def render_historical_backtest_tab(ticker, start_date, capital, hedge_ratio, sl_
             st.success("Backtest completato!")
             
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=results['hedged'].index, y=results['hedged'], mode='lines', name='Strategia Coperta (Hedged)'))
-            fig.add_trace(go.Scatter(x=results['long_only'].index, y=results['long_only'], mode='lines', name='Buy & Hold (Benchmark)'))
-            fig.update_layout(title='Andamento del Portafoglio', xaxis_title='Data', yaxis_title='Valore Portafoglio ($)', legend_title='Strategia')
+            fig.add_trace(go.Scatter(x=results['hedged'].index, y=results['hedged'], mode='lines', name='Hedged'))
+            fig.add_trace(go.Scatter(x=results['long_only'].index, y=results['long_only'], mode='lines', name='Buy & Hold'))
             st.plotly_chart(fig, use_container_width=True)
             
-            st.subheader("Metriche di Performance a Confronto")
             col1, col2 = st.columns(2)
-            
             with col1:
-                st.markdown("##### Strategia Coperta (Hedged)")
+                st.markdown("##### Strategia Coperta")
                 kpi_df_hedged = pd.DataFrame.from_dict(kpis_hedged, orient='index', columns=['Valore'])
-                if 'Max Drawdown' in kpi_df_hedged.index:
-                    kpi_df_hedged.loc['Max Drawdown'] = kpi_df_hedged.loc['Max Drawdown'].apply(lambda x: f"{x:.2%}" if isinstance(x, (int, float)) else x)
-                if 'Short-Only MaxDD' in kpi_df_hedged.index:
-                    kpi_df_hedged.loc['Short-Only MaxDD'] = kpi_df_hedged.loc['Short-Only MaxDD'].apply(lambda x: f"{x:.2%}" if isinstance(x, (int, float)) else x)
+                for col in ['Max Drawdown', 'Short-Only MaxDD']:
+                     if col in kpi_df_hedged.index:
+                        kpi_df_hedged.loc[col] = kpi_df_hedged.loc[col].apply(lambda x: f"{x:.2%}" if isinstance(x, (int, float)) else x)
                 st.table(kpi_df_hedged)
-
             with col2:
-                st.markdown("##### Benchmark (Buy & Hold)")
+                st.markdown("##### Benchmark")
                 kpis_bh.pop('Short-Only MaxDD', None)
-                kpis_bh['Num Trades'] = 1
                 kpi_df_bh = pd.DataFrame.from_dict(kpis_bh, orient='index', columns=['Valore'])
                 if 'Max Drawdown' in kpi_df_bh.index:
-                    kpi_df_bh.loc['Max Drawdown'] = f"{kpi_df_bh.loc['Max Drawdown'].values[0]:.2%}"
+                     kpi_df_bh.loc['Max Drawdown'] = f"{kpi_df_bh.loc['Max Drawdown'].values[0]:.2%}"
                 st.table(kpi_df_bh)
         else:
-            st.warning("Non è stato possibile recuperare i dati per il ticker specificato.")
+            st.warning("Dati non disponibili.")
 
 def render_methodology_tab():
-    """Renderizza la tab 'Metodologia'."""
-    st.header("Metodologia della Strategia e dell'App")
-    st.markdown("Questa applicazione è il risultato finale di un processo di ricerca e sviluppo di una strategia di hedging per asset volatili come Bitcoin.")
-    st.subheader("Strategia: Trend/Momentum Crossover con Filtro ADX")
-    st.markdown("- **Condizione di Entrata in Copertura:** Si apre una posizione short (per coprire una parte del portafoglio) quando la media mobile veloce incrocia al ribasso quella lenta E l'indicatore ADX è superiore a una certa soglia, a conferma che è presente un trend definito.\n- **Condizione di Uscita dalla Copertura:** La copertura viene chiusa quando il segnale degli indicatori cessa o quando scatta lo stop loss.\n- **Stop Loss:** Una misura di sicurezza chiude la copertura se il prezzo sale di una certa percentuale, limitando le perdite sulla singola operazione di hedging.")
-    st.subheader("Parametri Ottimali Utilizzati")
-    st.markdown("I seguenti parametri sono stati 'bloccati' dopo la Fase 2 di ottimizzazione e sono usati come default dall'applicazione:")
+    st.header("Metodologia")
+    st.markdown("Questa app implementa una strategia di hedging su Bitcoin.")
     st.code(f"OPTIMAL_PARAMS = {OPTIMAL_PARAMS}", language="python")
 
 # ==============================================================================
-# STRUTTURA PRINCIPALE DELL'APP
+# MAIN APP STRUCTURE
 # ==============================================================================
 st.title("🛡️ Kriterion Quant Hedging Backtester")
-
 st.sidebar.title("Navigazione")
-active_tab = st.sidebar.radio("Seleziona una sezione:", ["Segnale Attuale", "Backtest Storico", "Metodologia"])
+active_tab = st.sidebar.radio("Sezione:", ["Segnale Attuale", "Backtest Storico", "Metodologia"])
 
 if active_tab == "Segnale Attuale":
-    st.sidebar.subheader("Controlli Segnale")
-    ticker_live = st.sidebar.text_input("Ticker", "BTC-USD.CC", key="live_ticker")
-    run_live_button = st.sidebar.button("Aggiorna Segnale")
-    render_live_signal_tab(ticker_live, run_live_button)
+    st.sidebar.subheader("Controlli")
+    ticker = st.sidebar.text_input("Ticker", "BTC-USD.CC")
+    if st.sidebar.button("Aggiorna Segnale"):
+        render_live_signal_tab(ticker, True)
 
 elif active_tab == "Backtest Storico":
-    st.sidebar.subheader("Controlli Backtest")
-    ticker_backtest = st.sidebar.text_input("Ticker", "BTC-USD.CC", key="backtest_ticker")
-    start_date_backtest = st.sidebar.date_input("Data di Inizio", pd.to_datetime("2017-01-01"), key="backtest_start_date")
-    initial_capital_backtest = st.sidebar.number_input("Capitale Iniziale ($)", min_value=1000, value=50000, step=1000, key="backtest_capital")
-    hedge_ratio_backtest = st.sidebar.slider("Rapporto di Copertura (%)", 0, 200, 100, key="backtest_hedge_ratio") / 100.0
-    
-    stop_loss_perc_backtest = st.sidebar.slider("Stop Loss sulle Coperture (%)", 0, 50, 3, help="Impostare a 0 per disattivare lo stop loss.") / 100.0
-    
-    run_backtest_button = st.sidebar.button("Esegui Backtest", type="primary")
-    render_historical_backtest_tab(ticker_backtest, start_date_backtest, initial_capital_backtest, hedge_ratio_backtest, stop_loss_perc_backtest, run_backtest_button)
+    st.sidebar.subheader("Controlli")
+    ticker = st.sidebar.text_input("Ticker", "BTC-USD.CC", key="bt_tick")
+    start_dt = st.sidebar.date_input("Inizio", pd.to_datetime("2017-01-01"))
+    cap = st.sidebar.number_input("Capitale", value=50000)
+    hedge = st.sidebar.slider("Hedge %", 0, 200, 100) / 100.0
+    sl = st.sidebar.slider("Stop Loss %", 0, 50, 3) / 100.0
+    if st.sidebar.button("Esegui Backtest", type="primary"):
+        render_historical_backtest_tab(ticker, start_dt, cap, hedge, sl, True)
 
 elif active_tab == "Metodologia":
     render_methodology_tab()
